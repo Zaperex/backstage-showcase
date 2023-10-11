@@ -50,6 +50,9 @@ import {
 } from '@backstage/backend-plugin-manager';
 import { DefaultEventBroker } from '@backstage/plugin-events-backend';
 
+import { createAuthMiddleware } from './plugins/authMiddleware';
+import cookieParser from 'cookie-parser';
+
 function makeCreateEnv(config: Config, pluginProvider: BackendPluginProvider) {
   const root = getRootLogger();
   const reader = UrlReaders.default({ logger: root, config });
@@ -99,6 +102,7 @@ type AddPluginBase = {
   createEnv: ReturnType<typeof makeCreateEnv>;
   router: (env: PluginEnvironment) => Promise<ReturnType<typeof Router>>;
   options?: { path?: string };
+  authMiddleware?: any;
 };
 
 type AddPlugin = {
@@ -112,7 +116,15 @@ type AddOptionalPlugin = {
 } & AddPluginBase;
 
 async function addPlugin(args: AddPlugin | AddOptionalPlugin): Promise<void> {
-  const { isOptional, plugin, apiRouter, createEnv, router, options } = args;
+  const {
+    isOptional,
+    plugin,
+    apiRouter,
+    createEnv,
+    router,
+    options,
+    authMiddleware,
+  } = args;
 
   const isPluginEnabled =
     !isOptional ||
@@ -122,7 +134,15 @@ async function addPlugin(args: AddPlugin | AddOptionalPlugin): Promise<void> {
     const pluginEnv: PluginEnvironment = useHotMemoize(module, () =>
       createEnv(plugin),
     );
-    apiRouter.use(options?.path ?? `/${plugin}`, await router(pluginEnv));
+    if (authMiddleware) {
+      apiRouter.use(
+        options?.path ?? `/${plugin}`,
+        authMiddleware,
+        await router(pluginEnv),
+      );
+    } else {
+      apiRouter.use(options?.path ?? `/${plugin}`, await router(pluginEnv));
+    }
     console.log(`Using backend plugin ${plugin}...`);
   }
 }
@@ -165,22 +185,50 @@ async function main() {
   const createEnv = makeCreateEnv(config, pluginManager);
 
   const appEnv = useHotMemoize(module, () => createEnv('app'));
+  const authMiddleware = await createAuthMiddleware(config, appEnv);
 
   const apiRouter = Router();
+  apiRouter.use(cookieParser());
 
   // Required plugins
-  await addPlugin({ plugin: 'proxy', apiRouter, createEnv, router: proxy });
+  await addPlugin({
+    plugin: 'proxy',
+    apiRouter,
+    authMiddleware,
+    createEnv,
+    router: proxy,
+  });
   await addPlugin({ plugin: 'auth', apiRouter, createEnv, router: auth });
-  await addPlugin({ plugin: 'catalog', apiRouter, createEnv, router: catalog });
-  await addPlugin({ plugin: 'search', apiRouter, createEnv, router: search });
+  await addPlugin({
+    plugin: 'catalog',
+    apiRouter,
+    authMiddleware,
+    createEnv,
+    router: catalog,
+  });
+  await addPlugin({
+    plugin: 'search',
+    apiRouter,
+    authMiddleware,
+    createEnv,
+    router: search,
+  });
   await addPlugin({
     plugin: 'scaffolder',
     apiRouter,
     createEnv,
     router: scaffolder,
   });
-  await addPlugin({ plugin: 'events', apiRouter, createEnv, router: events });
-
+  await addPlugin({
+    plugin: 'events',
+    apiRouter,
+    authMiddleware,
+    createEnv,
+    router: events,
+  });
+  apiRouter.use('/cookie', authMiddleware, (_req, res) => {
+    res.status(200).send(`Coming right up`);
+  });
   // Optional plugins
   await addPlugin({
     plugin: 'ocm',

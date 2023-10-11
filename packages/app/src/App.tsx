@@ -47,12 +47,15 @@ import { SearchPage } from './components/search/SearchPage';
 import { LighthousePage } from '@backstage/plugin-lighthouse';
 import {
   configApiRef,
+  discoveryApiRef,
   githubAuthApiRef,
   useApi,
 } from '@backstage/core-plugin-api';
 import { customLightTheme } from './themes/lightTheme';
 import { customDarkTheme } from './themes/darkTheme';
 import { useUpdateTheme } from './hooks/useUpdateTheme';
+import type { IdentityApi } from '@backstage/core-plugin-api';
+import { setTokenCookie } from './cookieAuth';
 
 const app = createApp({
   apis,
@@ -108,6 +111,7 @@ const app = createApp({
   components: {
     SignInPage: props => {
       const configApi = useApi(configApiRef);
+      const discoveryApi = useApi(discoveryApiRef);
       if (configApi.getString('auth.environment') === 'development') {
         return (
           <SignInPage
@@ -123,6 +127,14 @@ const app = createApp({
                 apiRef: githubAuthApiRef,
               },
             ]}
+            onSignInSuccess={async (identityApi: IdentityApi) => {
+              setTokenCookie(
+                await discoveryApi.getBaseUrl('cookie'),
+                identityApi,
+              );
+
+              props.onSignInSuccess(identityApi);
+            }}
           />
         );
       }
